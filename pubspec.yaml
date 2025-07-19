@@ -1,0 +1,25 @@
+name: zut_oceny
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.3 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.1
+  html: ^0.15.4 # Do parsowania HTML
+  # Dio jest bardziej zaawansowanym klientem HTTP, który świetnie radzi sobie z cookie
+  dio: ^5.4.3+1 
+  dio_cookie_manager: ^3.1.1
+  cookie_jar: ^4.0.8
+  
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
