@@ -36,7 +36,7 @@ class MyApp extends StatelessWidget {
 
 // --- Modele danych ---
 
-/// Przechowuje informacje o ocenach z jednego przedmiotu.
+/// Przechowuje informacje o ocenach z jednego przedziotu.
 class Grade {
   final String subject;
   final String type;
@@ -48,6 +48,8 @@ class Grade {
   final String ects;
   final String gradeValue;
   final String gradeDate;
+  final double? numericalGrade; // Nowe pole dla numerycznej wartości oceny
+  final int ectsValue; // Nowe pole dla numerycznej wartości ECTS
 
   Grade({
     required this.subject,
@@ -59,7 +61,10 @@ class Grade {
     required this.retake2,
     required this.ects,
   })  : gradeValue = _extractGradeAndDate(term1).grade,
-        gradeDate = _extractGradeAndDate(term1).date;
+        gradeDate = _extractGradeAndDate(term1).date,
+        numericalGrade = _parseNumericalGrade(_extractGradeAndDate(term1).grade),
+        // Poprawka: Usuń wszystkie znaki niebędące cyframi przed parsowaniem ECTS
+        ectsValue = int.tryParse(ects.replaceAll(RegExp(r'[^0-9]'), '').trim()) ?? 0; //
 
   /// Parsuje fragment HTML, aby oddzielić ocenę od daty.
   static ({String grade, String date}) _extractGradeAndDate(String html) {
@@ -80,6 +85,28 @@ class Grade {
 
     return (grade: grade, date: date);
   }
+
+  /// Parsuje tekstową ocenę na wartość numeryczną (uwzględnia przecinki).
+  static double? _parseNumericalGrade(String gradeText) {
+    gradeText = gradeText.trim();
+    // Poprawka: Zamień przecinek na kropkę dla parsowania double
+    gradeText = gradeText.replaceAll(',', '.'); //
+
+    if (gradeText == 'bdb' || gradeText == '5.0') return 5.0;
+    if (gradeText == 'db+' || gradeText == '4.5') return 4.5;
+    if (gradeText == 'db' || gradeText == '4.0') return 4.0;
+    if (gradeText == 'dst+' || gradeText == '3.5') return 3.5;
+    if (gradeText == 'dst' || gradeText == '3.0') return 3.0;
+    if (gradeText == 'ndst' || gradeText == '2.0') return 2.0;
+
+    // Spróbuj parsować jako double, jeśli to czysta liczba
+    final double? parsed = double.tryParse(gradeText);
+    if (parsed != null && parsed >= 2.0 && parsed <= 5.0) {
+      return parsed;
+    }
+
+    return null; // Dla ocen typu "zal." lub brak oceny
+  }
 }
 
 /// Przechowuje informacje o bieżącym semestrze i nawigacji.
@@ -87,8 +114,19 @@ class SemesterInfo {
   final String name;
   final bool hasPrevious;
   final bool hasNext;
+  final int semesterNumber; // Numer semestru (np. 1, 2, 3...)
 
-  SemesterInfo({required this.name, this.hasPrevious = false, this.hasNext = false});
+  SemesterInfo({required this.name, this.hasPrevious = false, this.hasNext = false})
+      : semesterNumber = _parseSemesterNumber(name);
+
+  static int _parseSemesterNumber(String semesterName) {
+    final regex = RegExp(r'Semestr (\d+)');
+    final match = regex.firstMatch(semesterName);
+    if (match != null && match.groupCount > 0) {
+      return int.tryParse(match.group(1)!) ?? 0;
+    }
+    return 0; // Jeśli nie można rozpoznać numeru semestru
+  }
 }
 
 // --- Serwis do komunikacji z e-dziekanatem ---
@@ -113,23 +151,23 @@ class EDeaneryService {
     const String gradesPageUrl = "${_baseUrl}OcenyP.aspx";
     String htmlContent;
 
-    developer.log('Pobieranie strony ocen: $gradesPageUrl');
+    developer.log('Pobieranie strony ocen: $gradesPageUrl'); //
     Response response = await _dio.get(gradesPageUrl);
     htmlContent = response.data;
-    developer.log('Pobrano stronę ocen. Sprawdzam, czy wymagane jest logowanie...');
+    developer.log('Pobrano stronę ocen. Sprawdzam, czy wymagane jest logowanie...'); //
 
     if (htmlContent.contains('txtIdent')) {
-      developer.log('Strona wymaga logowania. Loguję...');
+      developer.log('Strona wymaga logowania. Loguję...'); //
       htmlContent = await _login(login, password);
-      developer.log('Zalogowano pomyślnie (lub próba logowania zakończona).');
+      developer.log('Zalogowano pomyślnie (lub próba logowania zakończona).'); //
     } else {
-      developer.log('Strona nie wymaga logowania. Kontynuuję z istniejącą sesją.');
+      developer.log('Strona nie wymaga logowania. Kontynuuję z istniejącą sesją.'); //
     }
     
     if (semesterOffset != 0) {
-      developer.log('Nawigacja do semestru z offsetem: $semesterOffset');
+      developer.log('Nawigacja do semestru z offsetem: $semesterOffset'); //
         htmlContent = await _navigateSemesters(htmlContent, semesterOffset);
-        developer.log('Zakończono nawigację po semestrach.');
+        developer.log('Zakończono nawigację po semestrach.'); //
     }
 
     return _parseGradesPage(htmlContent);
@@ -138,13 +176,13 @@ class EDeaneryService {
   /// Wykonuje proces logowania.
   Future<String> _login(String login, String password) async {
     const String loginPageUrl = "${_baseUrl}PodzGodzin.aspx";
-    developer.log('Pobieranie strony logowania: $loginPageUrl');
+    developer.log('Pobieranie strony logowania: $loginPageUrl'); //
     Response response = await _dio.get(loginPageUrl);
     
     dom.Document document = parser.parse(response.data);
     String formAction = document.querySelector('form')?.attributes['action'] ?? '';
     final String fullActionUrl = _baseUrl + formAction;
-    developer.log('Pobrano stronę logowania. Formularz akcja: $fullActionUrl');
+    developer.log('Pobrano stronę logowania. Formularz akcja: $fullActionUrl'); //
 
     Map<String, String> postData = {};
     document.querySelectorAll('input[type="hidden"]').forEach((input) {
@@ -156,7 +194,7 @@ class EDeaneryService {
       'ctl00\$ctl00\$ContentPlaceHolder\$MiddleContentPlaceHolder\$txtHaslo': password,
       'ctl00\$ctl00\$ContentPlaceHolder\$MiddleContentPlaceHolder\$butLoguj': 'Zaloguj',
     });
-    developer.log('Wysyłanie danych logowania...');
+    developer.log('Wysyłanie danych logowania...'); //
 
     Response loginResponse = await _dio.post(
       fullActionUrl,
@@ -172,13 +210,13 @@ class EDeaneryService {
     const String gradesPageUrl = "${_baseUrl}OcenyP.aspx";
     String direction = offset > 0 ? 'Następny' : 'Poprzedni';
     String html = currentHtml;
-    developer.log('Rozpoczynam nawigację po semestrach. Kierunek: $direction, offset: $offset');
+    developer.log('Rozpoczynam nawigację po semestrach. Kierunek: $direction, offset: $offset'); //
 
     for (int i = 0; i < offset.abs(); i++) {
         dom.Document doc = parser.parse(html);
         dom.Element? navButton = doc.querySelector("input[value='$direction']");
         if (navButton == null) {
-          developer.log('Brak przycisku nawigacji ($direction) na stronie.');
+          developer.log('Brak przycisku nawigacji ($direction) na stronie.'); //
           break;
         }
 
@@ -187,7 +225,7 @@ class EDeaneryService {
             postData[input.attributes['name']!] = input.attributes['value'] ?? '';
         });
         postData[navButton.attributes['name']!] = direction;
-        developer.log('Wysyłanie POST dla nawigacji semestru.');
+        developer.log('Wysyłanie POST dla nawigacji semestru.'); //
 
         Response navResponse = await _dio.post(
           gradesPageUrl,
@@ -198,27 +236,29 @@ class EDeaneryService {
     }
     return html;
   }
+
+  // Usunięto funkcję _getAllSemestersGrades, ponieważ nie jest już potrzebna do obliczeń globalnych.
   
   /// Parsuje HTML strony z ocenami.
   Map<String, dynamic> _parseGradesPage(String htmlContent) {
     dom.Document document = parser.parse(htmlContent);
-    developer.log('Rozpoczynam parsowanie strony z ocenami.');
+    developer.log('Rozpoczynam parsowanie strony z ocenami.'); //
 
     final loginCheckElement = document.querySelector("#ctl00_ctl00_ContentPlaceHolder_wumasterWhoIsLoggedIn");
     if (loginCheckElement == null || loginCheckElement.text.trim().isEmpty) {
-      developer.log('Błąd: Nie znaleziono elementu sprawdzającego zalogowanie lub jest pusty.');
+      developer.log('Błąd: Nie znaleziono elementu sprawdzającego zalogowanie lub jest pusty.'); //
         throw Exception("Błąd logowania lub sesja wygasła. Sprawdź dane i spróbuj ponownie.");
     } else {
-      developer.log('Użytkownik zalogowany: ${loginCheckElement.text.trim()}');
+      developer.log('Użytkownik zalogowany: ${loginCheckElement.text.trim()}'); //
     }
     
     final List<Grade> grades = [];
     final tableRows = document.querySelectorAll("#ctl00_ctl00_ContentPlaceHolder_RightContentPlaceHolder_dgDane tr.gridDane");
-    developer.log('Znaleziono ${tableRows.length} wierszy z ocenami.');
+    developer.log('Znaleziono ${tableRows.length} wierszy z ocenami.'); //
 
     for (var row in tableRows) {
         final cells = row.querySelectorAll("td");
-        if (cells.length > 10) {
+        if (cells.length > 10) { // Upewnij się, że są wystarczające kolumny
             grades.add(Grade(
               subject: cells[0].text.trim(),
               type: cells[1].text.trim(),
@@ -229,16 +269,19 @@ class EDeaneryService {
               retake2: cells[7].innerHtml,
               ects: cells[10].text.trim(),
             ));
+            developer.log('Dodano ocenę: Subject: ${cells[0].text.trim()}, Type: ${cells[1].text.trim()}, ECTS Raw: ${cells[10].text.trim()}, ECTS Parsed: ${grades.last.ectsValue}, Grade Raw: ${cells[5].innerHtml}, Grade Parsed: ${grades.last.numericalGrade}'); //
+        } else {
+          developer.log('Pominięto wiersz z powodu niewystarczającej liczby kolumn: ${cells.length}'); //
         }
     }
-    developer.log('Wypasowano ${grades.length} ocen.');
+    developer.log('Wypasowano ${grades.length} ocen.'); //
 
     final semesterInfo = SemesterInfo(
         name: document.querySelector("span[id*='lblSemestr']")?.text.trim() ?? 'Nieznany semestr',
         hasPrevious: document.querySelector("input[value='Poprzedni']") != null,
         hasNext: document.querySelector("input[value='Następny']") != null,
     );
-    developer.log('Informacje o semestrze: ${semesterInfo.name}, Poprzedni: ${semesterInfo.hasPrevious}, Następny: ${semesterInfo.hasNext}');
+    developer.log('Informacje o semestrze: ${semesterInfo.name}, Numer semestru: ${semesterInfo.semesterNumber}, Poprzedni: ${semesterInfo.hasPrevious}, Następny: ${semesterInfo.hasNext}'); //
 
     return {'grades': grades, 'info': semesterInfo};
   }
@@ -265,11 +308,20 @@ class _GradesPageState extends State<GradesPage> {
   SemesterInfo? _semesterInfo;
   int _currentOffset = 0;
   bool _rememberMe = false;
-  
+
+  // Zmienne dla podsumowania bieżącego semestru
+  int _currentSemesterEcts = 0; //
+  double _currentSemesterAvg = 0.0; //
+
+  // Usunięto zmienne dla globalnych i rocznych podsumowań:
+  // int _totalEcts = 0;
+  // double _totalAvg = 0.0;
+  // Map<int, double> _yearlyAvgs = {};
+
   @override
   void initState() {
     super.initState();
-    developer.log('initState: Ładowanie preferencji...');
+    developer.log('initState: Ładowanie preferencji...'); //
     _loadPreferences();
   }
 
@@ -280,10 +332,10 @@ class _GradesPageState extends State<GradesPage> {
     final loginLoaded = prefs.getString('login');
     final passwordLoaded = prefs.getString('password');
 
-    developer.log('--- _loadPreferences ---');
-    developer.log('rememberMeLoaded: $rememberMeLoaded');
-    developer.log('loginLoaded: ${loginLoaded != null ? "Jest" : "Brak"}');
-    developer.log('passwordLoaded: ${passwordLoaded != null ? "Jest" : "Brak"}');
+    developer.log('--- _loadPreferences ---'); //
+    developer.log('rememberMeLoaded: $rememberMeLoaded'); //
+    developer.log('loginLoaded: ${loginLoaded != null ? "Jest" : "Brak"}'); //
+    developer.log('passwordLoaded: ${passwordLoaded != null ? "Jest" : "Brak"}'); //
 
 
     setState(() {
@@ -292,33 +344,41 @@ class _GradesPageState extends State<GradesPage> {
       if (_rememberMe) {
         _loginController.text = loginLoaded ?? '';
         _passwordController.text = passwordLoaded ?? '';
-        developer.log('Pola logowania ustawione z SharedPreferences.');
+        developer.log('Pola logowania ustawione z SharedPreferences.'); //
       } else {
-        // Jeśli rememberMe jest false, wyczyść pola (na wypadek, gdyby poprzednio były wypełnione, a użytkownik odznaczył "zapamiętaj mnie")
-        _loginController.clear();
-        _passwordController.clear();
-        developer.log('RememberMe jest FALSE, pola logowania NIE ustawione z SharedPreferences (lub wyczyszczone).');
+        // Jeśli rememberMe jest false, wyczyść dane z SharedPreferences i upewnij się, że pola są puste.
+        // Pola formularza zostawiamy wypełnione, jeśli użytkownik je sam wpisał i nie zaznaczył "zapamiętaj mnie"
+        // ale jeśli były z sh_prefs, a odznaczył checkbox, to je czyścimy.
+        if (loginLoaded != null || passwordLoaded != null) { // Jeśli były zapisane, ale rememberMe jest false
+          prefs.remove('login');
+          prefs.remove('password');
+          _loginController.clear(); // Wyczyść, jeśli były zapisane, ale teraz rememberMe jest false
+          _passwordController.clear();
+          developer.log('RememberMe jest FALSE, wyczyszczono pola z pamięci i formularza.'); //
+        } else {
+          developer.log('RememberMe jest FALSE, pól formularza nie ruszamy (nie były z sh_prefs).'); //
+        }
       }
     });
 
     // Spróbuj zalogować się automatycznie, jeśli dane są dostępne i rememberMe jest true
     if (_rememberMe && _loginController.text.isNotEmpty && _passwordController.text.isNotEmpty) {
-      developer.log('Automatyczne logowanie: Próbuję pobrać oceny...');
+      developer.log('Automatyczne logowanie: Próbuję pobrać oceny...'); //
       _fetchGrades(newOffset: 0);
     } else {
-      developer.log('Brak warunków do automatycznego logowania.');
+      developer.log('Brak warunków do automatycznego logowania.'); //
     }
   }
 
   /// Główna funkcja do pobierania ocen.
   Future<void> _fetchGrades({int? newOffset}) async {
-    developer.log('--- _fetchGrades ---');
-    developer.log('Login: ${_loginController.text}, Hasło: ${_passwordController.text}');
+    developer.log('--- _fetchGrades ---'); //
+    developer.log('Login: ${_loginController.text}, Hasło: ${_passwordController.text}'); //
 
     if (_loginController.text.isEmpty || _passwordController.text.isEmpty) {
       setState(() {
         _errorMessage = "Login i hasło nie mogą być puste.";
-        developer.log('Błąd: Login lub hasło puste.');
+        developer.log('Błąd: Login lub hasło puste.'); //
       });
       return;
     }
@@ -329,7 +389,7 @@ class _GradesPageState extends State<GradesPage> {
       if (newOffset != null) {
         _currentOffset = newOffset;
       }
-      developer.log('Ustawiono _isLoading na true.');
+      developer.log('Ustawiono _isLoading na true.'); //
     });
 
     try {
@@ -343,47 +403,50 @@ class _GradesPageState extends State<GradesPage> {
         _grades = result['grades'];
         _semesterInfo = result['info'];
         _isLoggedIn = true;
-        developer.log('Pomyślnie pobrano oceny. _isLoggedIn ustawiono na true.');
+        developer.log('Pomyślnie pobrano oceny. _isLoggedIn ustawiono na true.'); //
       });
 
       // Zapisz stan checkboxa _rememberMe
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('rememberMe', _rememberMe); 
-      developer.log('Zapisano rememberMe: $_rememberMe');
+      developer.log('Zapisano rememberMe: $_rememberMe'); //
 
       // Zapisz lub usuń dane logowania w zależności od stanu _rememberMe
       if (_rememberMe) {
         await prefs.setString('login', _loginController.text);
         await prefs.setString('password', _passwordController.text);
-        developer.log('Zapisano login i hasło w SharedPreferences.');
+        developer.log('Zapisano login i hasło w SharedPreferences.'); //
       } else {
         await prefs.remove('login');
         await prefs.remove('password');
-        developer.log('Usunięto login i hasło z SharedPreferences (rememberMe było false).');
+        developer.log('Usunięto login i hasło z SharedPreferences (rememberMe było false).'); //
       }
+
+      // Po pomyślnym pobraniu ocen bieżącego semestru, oblicz podsumowania
+      _calculateCurrentSemesterSummary(); // Zmieniona nazwa funkcji
 
     } catch (e) {
       setState(() {
         _errorMessage = e.toString().replaceFirst("Exception: ", "");
         _isLoggedIn = false;
-        developer.log('Błąd podczas pobierania ocen: $_errorMessage');
+        developer.log('Błąd podczas pobierania ocen: $_errorMessage'); //
       });
     } finally {
       setState(() {
         _isLoading = false;
-        developer.log('Ustawiono _isLoading na false.');
+        developer.log('Ustawiono _isLoading na false.'); //
       });
     }
   }
 
   /// Wylogowuje użytkownika, czyszcząc zapisane dane i stan aplikacji.
   Future<void> _logout() async {
-    developer.log('--- _logout ---');
+    developer.log('--- _logout ---'); //
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('login');
     await prefs.remove('password');
     await prefs.setBool('rememberMe', false); // Zresetuj stan "Zapamiętaj mnie" w pamięci
-    developer.log('Usunięto login, hasło i ustawiono rememberMe na false w SharedPreferences.');
+    developer.log('Usunięto login, hasło i ustawiono rememberMe na false w SharedPreferences.'); //
 
     setState(() {
       // Usunięto linie .clear() aby pola nie były czyszczone
@@ -394,9 +457,38 @@ class _GradesPageState extends State<GradesPage> {
       _semesterInfo = null;
       _currentOffset = 0;
       _rememberMe = false; // Zresetuj stan _rememberMe w widżecie
-      developer.log('Stan aplikacji zresetowany po wylogowaniu. Pola logowania nie zostały wyczyszczone.');
+      _currentSemesterEcts = 0; // Resetowanie podsumowań bieżącego semestru
+      _currentSemesterAvg = 0.0; // Resetowanie podsumowań bieżącego semestru
+      // Usunięto resetowanie zmiennych globalnych i rocznych
+      developer.log('Stan aplikacji zresetowany po wylogowaniu. Pola logowania nie zostały wyczyszczone.'); //
     });
   }
+
+  /// Oblicza podsumowania ECTS i średnich TYLKO dla bieżącego semestru.
+  void _calculateCurrentSemesterSummary() { // Zmieniono na void i usunięto async, bo nie ma już await
+    developer.log('Rozpoczynam obliczanie podsumowania bieżącego semestru.'); //
+
+    double currentSemesterGradeSum = 0;
+    int currentSemesterEctsSum = 0;
+    for (var grade in _grades) {
+      developer.log('Bieżący semestr - Ocena: ${grade.gradeValue}, Typ: ${grade.type}, ECTS: ${grade.ectsValue}, NumGrade: ${grade.numericalGrade}'); //
+      if (grade.type.toLowerCase().contains('końcowa') && grade.numericalGrade != null) {
+        currentSemesterGradeSum += grade.numericalGrade! * grade.ectsValue;
+        currentSemesterEctsSum += grade.ectsValue;
+        developer.log('  -> Wliczono do bieżącego semestru. Suma ocena*ECTS: $currentSemesterGradeSum, Suma ECTS: $currentSemesterEctsSum'); //
+      } else {
+        developer.log('  -> NIE wliczono do bieżącego semestru (nie końcowa lub brak oceny numerycznej).'); //
+      }
+    }
+    setState(() {
+      _currentSemesterEcts = currentSemesterEctsSum;
+      _currentSemesterAvg = currentSemesterEctsSum > 0 ? currentSemesterGradeSum / currentSemesterEctsSum : 0.0;
+      developer.log('Podsumowanie bieżącego semestru: ECTS: $_currentSemesterEcts, Średnia: $_currentSemesterAvg'); //
+    });
+
+    // Usunięto całą logikę pobierania wszystkich semestrów i obliczeń globalnych/rocznych
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -465,7 +557,7 @@ class _GradesPageState extends State<GradesPage> {
               onChanged: (newValue) {
                 setState(() {
                   _rememberMe = newValue ?? false;
-                  developer.log('Checkbox "Zapamiętaj mnie" zmieniony na: $_rememberMe');
+                  developer.log('Checkbox "Zapamiętaj mnie" zmieniony na: $_rememberMe'); //
                 });
               },
               controlAffinity: ListTileControlAffinity.leading,
@@ -488,6 +580,23 @@ class _GradesPageState extends State<GradesPage> {
       children: [
         _buildSemesterNavigation(),
         const SizedBox(height: 16),
+        // Podsumowanie ocen
+        Card(
+          margin: const EdgeInsets.only(bottom: 16.0),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Podsumowanie', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 10),
+                Text('ECTS w bieżącym semestrze: $_currentSemesterEcts', style: Theme.of(context).textTheme.bodyLarge), //
+                Text('Średnia w bieżącym semestrze (ważona): ${_currentSemesterAvg.toStringAsFixed(2)}', style: Theme.of(context).textTheme.bodyLarge), //
+                // Usunięto pozostałe linie podsumowania
+              ],
+            ),
+          ),
+        ),
         _grades.isEmpty
             ? const Text('Brak przedmiotów i ocen w tym semestrze.')
             : ListView.builder(
